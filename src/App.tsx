@@ -16,11 +16,10 @@ import {
   Upload,
   Link as LinkIcon,
   Play,
-  Video as VideoIcon,
-  Heart
+  Video as VideoIcon
 } from 'lucide-react';
 import { db, loginAnonymously, auth } from './firebase';
-import { collection, onSnapshot, query, orderBy, addDoc, serverTimestamp, setDoc, deleteDoc, doc } from 'firebase/firestore';
+import { collection, onSnapshot, query, orderBy, addDoc, serverTimestamp } from 'firebase/firestore';
 import Masonry from 'react-masonry-css';
 import { cn } from './lib/utils';
 
@@ -38,10 +37,6 @@ interface Pin {
   createdAt: any;
 }
 
-interface UserSave {
-  pinId: string;
-}
-
 export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
     return localStorage.getItem(STORAGE_KEY) === 'true';
@@ -50,8 +45,6 @@ export default function App() {
   const [error, setError] = useState('');
   
   const [pins, setPins] = useState<Pin[]>([]);
-  const [userSaves, setUserSaves] = useState<Set<string>>(new Set());
-  const [filterMode, setFilterMode] = useState<'all' | 'saved'>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
   const [selectedPin, setSelectedPin] = useState<Pin | null>(null);
@@ -86,59 +79,17 @@ export default function App() {
       }
     );
 
-    let savesUnsub = () => {};
-    if (auth.currentUser) {
-      savesUnsub = onSnapshot(
-        query(collection(db, 'saves')),
-        (snapshot) => {
-          const saveIds = new Set<string>();
-          snapshot.docs.forEach(doc => {
-            const data = doc.data();
-            if (data.uid === auth.currentUser?.uid) {
-              saveIds.add(data.pinId);
-            }
-          });
-          setUserSaves(saveIds);
-        }
-      );
-    }
-
-    return () => {
-      pinsUnsub();
-      savesUnsub();
-    };
-  }, [isAuthenticated, auth.currentUser]);
+    return () => pinsUnsub();
+  }, [isAuthenticated]);
 
   const filteredPins = useMemo(() => {
-    let result = pins;
-    if (filterMode === 'saved') {
-      result = result.filter(pin => userSaves.has(pin.id));
-    }
-    if (searchQuery) {
-      const q = searchQuery.toLowerCase();
-      result = result.filter(pin => 
-        pin.title?.toLowerCase().includes(q) || 
-        pin.description?.toLowerCase().includes(q)
-      );
-    }
-    return result;
-  }, [pins, searchQuery, filterMode, userSaves]);
-
-  const toggleSave = async (e: React.MouseEvent, pinId: string) => {
-    e.stopPropagation();
-    if (!auth.currentUser) return;
-    
-    const saveId = `${auth.currentUser.uid}_${pinId}`;
-    if (userSaves.has(pinId)) {
-      await deleteDoc(doc(db, 'saves', saveId));
-    } else {
-      await setDoc(doc(db, 'saves', saveId), {
-        uid: auth.currentUser.uid,
-        pinId,
-        createdAt: serverTimestamp()
-      });
-    }
-  };
+    if (!searchQuery) return pins;
+    const q = searchQuery.toLowerCase();
+    return pins.filter(pin => 
+      pin.title?.toLowerCase().includes(q) || 
+      pin.description?.toLowerCase().includes(q)
+    );
+  }, [pins, searchQuery]);
 
   if (!isAuthenticated) {
     return (
@@ -189,23 +140,8 @@ export default function App() {
         </div>
         
         <div className="hidden lg:flex gap-2">
-          <button 
-            onClick={() => setFilterMode('all')}
-            className={cn(
-              "px-8 py-3 rounded-full font-bold transition-all",
-              filterMode === 'all' ? "bg-neutral-900 text-white shadow-lg shadow-neutral-200" : "hover:bg-neutral-100"
-            )}
-          >
+          <button className="px-8 py-3 rounded-full font-bold bg-neutral-900 text-white transition-all shadow-lg shadow-neutral-200">
             首页
-          </button>
-          <button 
-            onClick={() => setFilterMode('saved')}
-            className={cn(
-              "px-8 py-3 rounded-full font-bold transition-all",
-              filterMode === 'saved' ? "bg-neutral-900 text-white shadow-lg shadow-neutral-200" : "hover:bg-neutral-100"
-            )}
-          >
-            我的保存
           </button>
         </div>
 
@@ -288,20 +224,7 @@ export default function App() {
                 )}
                 
                 {/* Overlay on hover */}
-                <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex flex-col justify-between p-6">
-                  <div className="flex justify-end">
-                    <button 
-                      onClick={(e) => toggleSave(e, pin.id)}
-                      className={cn(
-                        "px-6 py-4 rounded-full font-bold shadow-lg transition-all active:scale-95 flex items-center gap-2",
-                        userSaves.has(pin.id) ? "bg-red-600 text-white" : "bg-white text-black hover:bg-neutral-100"
-                      )}
-                    >
-                      <Heart size={18} fill={userSaves.has(pin.id) ? "white" : "none"} />
-                      {userSaves.has(pin.id) ? "已保存" : "保存"}
-                    </button>
-                  </div>
-                  
+                <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex flex-col justify-end p-6">
                   <div className="flex items-center justify-between text-white">
                     <div className="flex-1 truncate mr-4">
                       <p className="font-bold text-lg truncate drop-shadow-md">{pin.title || '未命名感悟'}</p>
