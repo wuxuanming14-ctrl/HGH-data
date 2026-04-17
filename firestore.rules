@@ -9,6 +9,7 @@ service cloud.firestore {
 
     function isValidPin(data) {
       return data.imageUrl is string && data.imageUrl.size() < 10000 &&
+             data.type in ['image', 'video'] &&
              (!('title' in data) || (data.title is string && data.title.size() < 500));
     }
 
@@ -17,6 +18,14 @@ service cloud.firestore {
       allow create: if isAuthenticated() && isValidPin(request.resource.data);
       allow update: if isAuthenticated() && isValidPin(request.resource.data);
       allow delete: if isAuthenticated();
+    }
+
+    match /saves/{saveId} {
+      allow read: if isAuthenticated();
+      allow create, update: if isAuthenticated() && 
+                             request.resource.data.uid == request.auth.uid &&
+                             request.resource.data.pinId is string;
+      allow delete: if isAuthenticated() && resource.data.uid == request.auth.uid;
     }
 
     match /{path=**} {

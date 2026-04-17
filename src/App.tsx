@@ -14,10 +14,13 @@ import {
   X,
   MoreHorizontal,
   Upload,
-  Link as LinkIcon
+  Link as LinkIcon,
+  Play,
+  Video as VideoIcon,
+  Heart
 } from 'lucide-react';
-import { db, loginAnonymously } from './firebase';
-import { collection, onSnapshot, query, orderBy, addDoc, serverTimestamp } from 'firebase/firestore';
+import { db, loginAnonymously, auth } from './firebase';
+import { collection, onSnapshot, query, orderBy, addDoc, serverTimestamp, setDoc, deleteDoc, doc } from 'firebase/firestore';
 import Masonry from 'react-masonry-css';
 import { cn } from './lib/utils';
 
@@ -29,9 +32,14 @@ const STORAGE_KEY = 'hgh_auth_session';
 interface Pin {
   id: string;
   imageUrl: string;
+  type: 'image' | 'video';
   title?: string;
   description?: string;
   createdAt: any;
+}
+
+interface UserSave {
+  pinId: string;
 }
 
 export default function App() {
@@ -42,6 +50,8 @@ export default function App() {
   const [error, setError] = useState('');
   
   const [pins, setPins] = useState<Pin[]>([]);
+  const [userSaves, setUserSaves] = useState<Set<string>>(new Set());
+  const [filterMode, setFilterMode] = useState<'all' | 'saved'>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
   const [selectedPin, setSelectedPin] = useState<Pin | null>(null);
@@ -76,17 +86,59 @@ export default function App() {
       }
     );
 
-    return () => pinsUnsub();
-  }, [isAuthenticated]);
+    let savesUnsub = () => {};
+    if (auth.currentUser) {
+      savesUnsub = onSnapshot(
+        query(collection(db, 'saves')),
+        (snapshot) => {
+          const saveIds = new Set<string>();
+          snapshot.docs.forEach(doc => {
+            const data = doc.data();
+            if (data.uid === auth.currentUser?.uid) {
+              saveIds.add(data.pinId);
+            }
+          });
+          setUserSaves(saveIds);
+        }
+      );
+    }
+
+    return () => {
+      pinsUnsub();
+      savesUnsub();
+    };
+  }, [isAuthenticated, auth.currentUser]);
 
   const filteredPins = useMemo(() => {
-    if (!searchQuery) return pins;
-    const q = searchQuery.toLowerCase();
-    return pins.filter(pin => 
-      pin.title?.toLowerCase().includes(q) || 
-      pin.description?.toLowerCase().includes(q)
-    );
-  }, [pins, searchQuery]);
+    let result = pins;
+    if (filterMode === 'saved') {
+      result = result.filter(pin => userSaves.has(pin.id));
+    }
+    if (searchQuery) {
+      const q = searchQuery.toLowerCase();
+      result = result.filter(pin => 
+        pin.title?.toLowerCase().includes(q) || 
+        pin.description?.toLowerCase().includes(q)
+      );
+    }
+    return result;
+  }, [pins, searchQuery, filterMode, userSaves]);
+
+  const toggleSave = async (e: React.MouseEvent, pinId: string) => {
+    e.stopPropagation();
+    if (!auth.currentUser) return;
+    
+    const saveId = `${auth.currentUser.uid}_${pinId}`;
+    if (userSaves.has(pinId)) {
+      await deleteDoc(doc(db, 'saves', saveId));
+    } else {
+      await setDoc(doc(db, 'saves', saveId), {
+        uid: auth.currentUser.uid,
+        pinId,
+        createdAt: serverTimestamp()
+      });
+    }
+  };
 
   if (!isAuthenticated) {
     return (
@@ -137,8 +189,23 @@ export default function App() {
         </div>
         
         <div className="hidden lg:flex gap-2">
-          <button className="px-8 py-3 rounded-full font-bold bg-neutral-900 text-white transition-all shadow-lg shadow-neutral-200">
+          <button 
+            onClick={() => setFilterMode('all')}
+            className={cn(
+              "px-8 py-3 rounded-full font-bold transition-all",
+              filterMode === 'all' ? "bg-neutral-900 text-white shadow-lg shadow-neutral-200" : "hover:bg-neutral-100"
+            )}
+          >
             首页
+          </button>
+          <button 
+            onClick={() => setFilterMode('saved')}
+            className={cn(
+              "px-8 py-3 rounded-full font-bold transition-all",
+              filterMode === 'saved' ? "bg-neutral-900 text-white shadow-lg shadow-neutral-200" : "hover:bg-neutral-100"
+            )}
+          >
+            我的保存
           </button>
         </div>
 
@@ -195,16 +262,46 @@ export default function App() {
               onClick={() => setSelectedPin(pin)}
             >
               <div className="relative rounded-3xl overflow-hidden bg-neutral-100 transition-all duration-500 transform group-hover:shadow-[0_20px_40px_-15px_rgba(0,0,0,0.15)]">
-                <img
-                  src={pin.imageUrl}
-                  alt={pin.title}
-                  className="w-full h-auto object-cover block"
-                  loading="lazy"
-                  referrerPolicy="no-referrer"
-                />
+                {pin.type === 'video' ? (
+                  <div className="relative">
+                    <video
+                      src={pin.imageUrl}
+                      className="w-full h-auto object-cover block"
+                      muted
+                      loop
+                      playsInline
+                      onMouseOver={(e) => e.currentTarget.play()}
+                      onMouseOut={(e) => e.currentTarget.pause()}
+                    />
+                    <div className="absolute top-4 left-4 bg-black/50 backdrop-blur-sm p-2 rounded-full text-white">
+                      <Play size={16} fill="white" />
+                    </div>
+                  </div>
+                ) : (
+                  <img
+                    src={pin.imageUrl}
+                    alt={pin.title}
+                    className="w-full h-auto object-cover block"
+                    loading="lazy"
+                    referrerPolicy="no-referrer"
+                  />
+                )}
                 
                 {/* Overlay on hover */}
-                <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex flex-col justify-end p-6">
+                <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex flex-col justify-between p-6">
+                  <div className="flex justify-end">
+                    <button 
+                      onClick={(e) => toggleSave(e, pin.id)}
+                      className={cn(
+                        "px-6 py-4 rounded-full font-bold shadow-lg transition-all active:scale-95 flex items-center gap-2",
+                        userSaves.has(pin.id) ? "bg-red-600 text-white" : "bg-white text-black hover:bg-neutral-100"
+                      )}
+                    >
+                      <Heart size={18} fill={userSaves.has(pin.id) ? "white" : "none"} />
+                      {userSaves.has(pin.id) ? "已保存" : "保存"}
+                    </button>
+                  </div>
+                  
                   <div className="flex items-center justify-between text-white">
                     <div className="flex-1 truncate mr-4">
                       <p className="font-bold text-lg truncate drop-shadow-md">{pin.title || '未命名感悟'}</p>
@@ -281,16 +378,26 @@ function ImagePreviewModal({ pin, onClose }: { pin: Pin, onClose: () => void }) 
         </button>
         
         <div className="bg-white rounded-[2rem] overflow-hidden shadow-2xl flex flex-col lg:flex-row max-h-[85vh] lg:max-h-[90vh]">
-          <div className="flex-1 overflow-auto bg-neutral-50 flex items-center justify-center">
-            <img 
-              src={pin.imageUrl} 
-              alt={pin.title} 
-              className="max-w-full h-auto object-contain block"
-              referrerPolicy="no-referrer"
-            />
+          <div className="flex-1 overflow-auto bg-neutral-50 flex items-center justify-center min-w-[300px] lg:min-w-[600px]">
+            {pin.type === 'video' ? (
+              <video 
+                src={pin.imageUrl} 
+                className="max-w-full h-auto object-contain block"
+                controls
+                autoPlay
+                playsInline
+              />
+            ) : (
+              <img 
+                src={pin.imageUrl} 
+                alt={pin.title} 
+                className="max-w-full h-auto object-contain block"
+                referrerPolicy="no-referrer"
+              />
+            )}
           </div>
           
-          <div className="w-full lg:w-80 p-8 flex flex-col justify-between bg-white border-l border-neutral-100">
+          <div className="w-full lg:w-96 p-8 flex flex-col justify-between bg-white border-l border-neutral-100">
             <div>
               <h2 className="text-2xl font-bold text-neutral-900 mb-4">{pin.title || '灵感碎片'}</h2>
               <div className="flex items-center gap-3 text-neutral-500">
@@ -328,16 +435,18 @@ function ImagePreviewModal({ pin, onClose }: { pin: Pin, onClose: () => void }) 
 function UploadModal({ onClose }: { onClose: () => void }) {
   const [url, setUrl] = useState('');
   const [title, setTitle] = useState('');
+  const [type, setType] = useState<'image' | 'video'>('image');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const [dragError, setDragError] = useState('');
 
-  const handlePublish = async (imageUrl: string, pinTitle: string) => {
-    if (!imageUrl) return;
+  const handlePublish = async (mediaUrl: string, pinTitle: string, mediaType: 'image' | 'video') => {
+    if (!mediaUrl) return;
     setIsSubmitting(true);
     try {
       await addDoc(collection(db, 'pins'), {
-        imageUrl,
+        imageUrl: mediaUrl,
+        type: mediaType,
         title: pinTitle || '新灵感',
         createdAt: serverTimestamp()
       });
@@ -351,7 +460,7 @@ function UploadModal({ onClose }: { onClose: () => void }) {
 
   const handleManualSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    handlePublish(url, title);
+    handlePublish(url, title, type);
   };
 
   // Drag and Drop Handling
@@ -370,42 +479,53 @@ function UploadModal({ onClose }: { onClose: () => void }) {
     setIsDragging(false);
     setDragError('');
 
-    // Try to get dropped URL or Image
     const textData = e.dataTransfer.getData('text/plain');
     const htmlData = e.dataTransfer.getData('text/html');
     
-    // Simple check for image URL in dropped text
-    if (textData && (textData.startsWith('http') || textData.includes('data:image'))) {
+    if (textData && (textData.startsWith('http') || textData.includes('data:image') || textData.includes('data:video'))) {
+      const isVideo = textData.toLowerCase().match(/\.(mp4|webm|ogg|mov)$/) || textData.includes('data:video');
       setUrl(textData);
+      setType(isVideo ? 'video' : 'image');
       return;
     }
 
-    // Check for dropped HTML (common when dragging from other tabs)
     if (htmlData) {
       const match = htmlData.match(/src="([^"]+)"/);
       if (match && match[1]) {
+        const isVideo = match[1].toLowerCase().match(/\.(mp4|webm|ogg|mov)$/);
         setUrl(match[1]);
+        setType(isVideo ? 'video' : 'image');
         return;
       }
     }
 
-    // Check for files
     const files = e.dataTransfer.files;
     if (files && files.length > 0) {
       const file = files[0];
-      if (file.type.startsWith('image/')) {
+      const isImage = file.type.startsWith('image/');
+      const isVideo = file.type.startsWith('video/');
+
+      if (isImage || isVideo) {
         const reader = new FileReader();
         reader.onload = (event) => {
           if (event.target?.result) {
-            handlePublish(event.target.result as string, file.name.split('.')[0]);
+            handlePublish(event.target.result as string, file.name.split('.')[0], isVideo ? 'video' : 'image');
           }
         };
         reader.readAsDataURL(file);
       } else {
-        setDragError('请拖拽有效的图片文件或链接');
+        setDragError('请拖拽有效的图片、视频文件或链接');
       }
     }
   }, []);
+
+  useEffect(() => {
+    // Detect type from URL manual input
+    if (url) {
+      const isVideo = url.toLowerCase().match(/\.(mp4|webm|ogg|mov)$/);
+      setType(isVideo ? 'video' : 'image');
+    }
+  }, [url]);
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
@@ -420,12 +540,12 @@ function UploadModal({ onClose }: { onClose: () => void }) {
         initial={{ scale: 0.9, opacity: 0, y: 20 }}
         animate={{ scale: 1, opacity: 1, y: 0 }}
         exit={{ scale: 0.9, opacity: 0, y: 20 }}
-        className="relative bg-white w-full max-w-2xl rounded-[3rem] overflow-hidden shadow-2xl flex flex-col md:flex-row"
+        className="relative bg-white w-full max-w-4xl rounded-[3rem] overflow-hidden shadow-2xl flex flex-col md:flex-row min-h-[500px]"
       >
         {/* Left Side: Drag and Drop Area */}
         <div 
           className={cn(
-            "flex-1 p-10 flex flex-col items-center justify-center transition-all duration-300",
+            "flex-1 p-10 flex flex-col items-center justify-center transition-all duration-300 min-h-[300px]",
             isDragging ? "bg-red-50" : "bg-neutral-50"
           )}
           onDragOver={handleDragOver}
@@ -434,7 +554,11 @@ function UploadModal({ onClose }: { onClose: () => void }) {
         >
           {url ? (
             <div className="relative w-full aspect-[3/4] rounded-3xl overflow-hidden shadow-lg bg-white border-8 border-white">
-              <img src={url} className="w-full h-full object-cover" alt="Preview" />
+              {type === 'video' ? (
+                <video src={url} className="w-full h-full object-cover" autoPlay muted loop />
+              ) : (
+                <img src={url} className="w-full h-full object-cover" alt="Preview" />
+              )}
               <button 
                 onClick={() => setUrl('')}
                 className="absolute top-4 right-4 bg-black/50 text-white p-2 rounded-full hover:bg-black transition-colors"
@@ -454,18 +578,18 @@ function UploadModal({ onClose }: { onClose: () => void }) {
                 <Upload size={32} />
               </div>
               <p className="text-xl font-bold text-neutral-600 px-8 text-center">
-                {isDragging ? '放开以捕捉灵感' : '将图片或链接拖拽至此'}
+                {isDragging ? '放开以提取媒体' : '将图片、视频或链接拖拽至此'}
               </p>
-              <p className="text-sm mt-4 opacity-60">支持本地图片、网络链接</p>
+              <p className="text-sm mt-4 opacity-60">支持 WebM, MP4, JPEG, PNG 等</p>
               {dragError && <p className="text-red-500 text-sm mt-4 font-bold">{dragError}</p>}
             </div>
           )}
         </div>
 
         {/* Right Side: Form */}
-        <div className="flex-1 p-10 flex flex-col justify-center border-l border-neutral-100">
+        <div className="flex-1 p-10 flex flex-col justify-center border-l border-neutral-100 bg-white">
           <div className="flex justify-between items-center mb-8">
-            <h2 className="text-3xl font-bold">发布新灵感</h2>
+            <h2 className="text-3xl font-bold">发布灵感</h2>
             <button onClick={onClose} className="p-3 hover:bg-neutral-100 rounded-full transition-colors md:hidden">
               <X />
             </button>
@@ -473,11 +597,34 @@ function UploadModal({ onClose }: { onClose: () => void }) {
           
           <form onSubmit={handleManualSubmit} className="space-y-8">
             <div className="space-y-4">
+              <div className="flex bg-neutral-100 p-1 rounded-2xl">
+                <button
+                  type="button"
+                  onClick={() => setType('image')}
+                  className={cn(
+                    "flex-1 py-3 rounded-xl font-bold transition-all flex items-center justify-center gap-2",
+                    type === 'image' ? "bg-white shadow-sm text-neutral-900" : "text-neutral-500 hover:text-neutral-700"
+                  )}
+                >
+                  <ImageIcon size={18} /> 图片
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setType('video')}
+                  className={cn(
+                    "flex-1 py-3 rounded-xl font-bold transition-all flex items-center justify-center gap-2",
+                    type === 'video' ? "bg-white shadow-sm text-neutral-900" : "text-neutral-500 hover:text-neutral-700"
+                  )}
+                >
+                  <VideoIcon size={18} /> 视频
+                </button>
+              </div>
+
               <div className="relative group">
                 <LinkIcon size={18} className="absolute left-6 top-1/2 -translate-y-1/2 text-neutral-400 group-focus-within:text-red-500 transition-colors" />
                 <input
                   type="url"
-                  placeholder="手动输入图片网址..."
+                  placeholder="手动输入媒体网址..."
                   value={url}
                   onChange={(e) => setUrl(e.target.value)}
                   className="w-full pl-14 pr-6 py-5 bg-neutral-100 rounded-[1.5rem] border-none focus:ring-2 focus:ring-red-500 outline-none transition-all text-lg"
@@ -486,7 +633,7 @@ function UploadModal({ onClose }: { onClose: () => void }) {
               
               <input
                 type="text"
-                placeholder="给这次遇见起个标题..."
+                placeholder="起个动人的标题..."
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
                 className="w-full px-6 py-5 bg-neutral-100 rounded-[1.5rem] border-none focus:ring-2 focus:ring-red-500 outline-none transition-all text-lg"
@@ -512,7 +659,7 @@ function UploadModal({ onClose }: { onClose: () => void }) {
           
           <div className="mt-10 p-5 bg-blue-50 rounded-2xl border border-blue-100">
             <p className="text-blue-600 text-sm leading-relaxed">
-              <strong>提示：</strong> 您可以直接从其他网页拖拽图片到左侧区域，系统会自动提取链接。
+              <strong>提示：</strong> 支持图片与视频混排。将视频链接（.mp4等）拖入左侧可直接识别。
             </p>
           </div>
         </div>
