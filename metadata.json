@@ -1,0 +1,6 @@
+{
+  "name": "HGH Pin Board",
+  "description": "A minimalist Pinterest-like inspiration board with password protection, masonry layout, and drag-and-drop image discovery.",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}

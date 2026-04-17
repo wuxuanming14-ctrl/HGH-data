@@ -1,0 +1,39 @@
+{
+  "entities": {
+    "Board": {
+      "title": "Board",
+      "description": "A collection of pins",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "description": "Name of the board" },
+        "description": { "type": "string", "description": "Short description" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Creation time" }
+      },
+      "required": ["name"]
+    },
+    "Pin": {
+      "title": "Pin",
+      "description": "An image pin with metadata",
+      "type": "object",
+      "properties": {
+        "imageUrl": { "type": "string", "format": "uri", "description": "URL of the image" },
+        "title": { "type": "string", "description": "Title of the pin" },
+        "description": { "type": "string", "description": "Description of the pin" },
+        "boardId": { "type": "string", "description": "ID of the board this pin belongs to" },
+        "aspectRatio": { "type": "number", "description": "Width/Height ratio for layout" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Creation time" }
+      },
+      "required": ["imageUrl", "boardId"]
+    }
+  },
+  "firestore": {
+    "/boards/{boardId}": {
+      "schema": "Board",
+      "description": "Collection of boards"
+    },
+    "/pins/{pinId}": {
+      "schema": "Pin",
+      "description": "Collection of pins"
+    }
+  }
+}
